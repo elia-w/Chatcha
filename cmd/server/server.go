@@ -127,7 +127,7 @@ func initDB() {
 
 // Fonction pour insérer un message dans la base de données
 func insertMessage(message string) {
-	query := "INSERT INTO messages (message) VALUES (?)"
+	query := "INSERT INTO messages (contenu) VALUES (?)"
 	_, err := db.Exec(query, message)
 	if err != nil {
 		log.Println("Erreur lors de l'insertion du message : ", err)
