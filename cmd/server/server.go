@@ -64,7 +64,7 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		} else {
-			insertMessage(string(p))
+			print(p)
 		}
 
 		// Affiche le message et renvoie-le au client
@@ -126,9 +126,9 @@ func initDB() {
 }
 
 // Fonction pour insérer un message dans la base de données
-func insertMessage(message string) {
-	query := "INSERT INTO messages (contenu) VALUES (?)"
-	_, err := db.Exec(query, message)
+func insertMessage(message Message) {
+	query := "INSERT INTO messages (idUser,idSalon,contenu) VALUES (?,?,?)"
+	_, err := db.Exec(query, message.idUser, message.idSalon, message.contenu)
 	if err != nil {
 		log.Println("Erreur lors de l'insertion du message : ", err)
 	}
