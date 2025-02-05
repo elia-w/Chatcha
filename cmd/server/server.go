@@ -56,7 +56,12 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 	for {
 		messageType, p, err := conn.ReadMessage()
 		if err != nil {
-			log.Println("Erreur lors de la lecture du message : ", err)
+			// Vérifie si l'erreur est liée à la fermeture normale de la connexion
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				log.Println("La connexion a été fermée proprement.")
+			} else {
+				log.Println("Erreur lors de la lecture du message : ", err)
+			}
 			return
 		} else {
 			insertMessage(string(p))

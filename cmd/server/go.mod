@@ -2,8 +2,6 @@ module server
 
 go 1.21
 
-toolchain go1.23.4
-
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

@@ -43,4 +43,16 @@ func main() {
 		log.Fatalf("Erreur lors de la lecture de la réponse : %v", err)
 	}
 	fmt.Printf("Réponse du serveur : %s\n", response)
+
+	// Envoi d'un message de fermeture au serveur (facultatif, mais recommandé)
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		log.Fatalf("Erreur lors de l'envoi du message de fermeture : %v", err)
+	}
+	fmt.Println("Message de fermeture envoyé.")
+
+	// Fermeture propre de la connexion
+	if err := conn.Close(); err != nil {
+		log.Fatalf("Erreur lors de la fermeture de la connexion : %v", err)
+	}
+	fmt.Println("Connexion fermée proprement.")
 }
