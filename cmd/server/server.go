@@ -84,10 +84,36 @@ func initDB() {
 	query := `
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            idUser INTEGER,
+            idSalon INTEGER,
+            contenu TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (idUser) REFERENCES users(id),
+            FOREIGN KEY (idSalon) REFERENCES salons(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS salons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nbUserMax INTEGER,
+            nameSalon TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            pseudo TEXT,
+            password TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS listeUser(
+            idSalon INTEGER,
+            idUser INTEGER,
+            PRIMARY KEY (idSalon, idUser),
+            FOREIGN KEY (idUser) REFERENCES users(id),
+            FOREIGN KEY (idSalon) REFERENCES salons(id)
         );
     `
+
 	_, err = db.Exec(query)
 	if err != nil {
 		log.Fatal("Erreur lors de la création de la table : ", err)
