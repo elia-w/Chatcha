@@ -71,12 +71,14 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 				log.Println("Erreur lors de la lecture du message : ", err)
 			}
 			return
-		} else {
-			var msg Message
-			err := json.Unmarshal(p, &msg)
-			if err != nil {
-			insertMessage((p.contenu))
-		}
+		} 
+		//else {
+		// var msg Message
+			// err := json.Unmarshal(p, &msg)
+			// if err != nil {
+			// 	insertMessage((p.contenu))
+			// }
+		//}
 
 		// Affiche le message et renvoie-le au client
 		fmt.Printf("Message reçu : %s\n", p)
@@ -146,17 +148,18 @@ func insertMessage(message Message) {
 }
 
 func createUser(i int) {
-	query := "INSERT INTO users (username,pseudo,password) VALUE(?,?,?)"
+	query := "INSERT INTO users (username,pseudo,password) VALUES(?,?,?)"
 	_, err := db.Exec(query, "user"+strconv.Itoa(i), "pseudo"+strconv.Itoa(i), "password"+strconv.Itoa(i))
 	if err != nil {
 		log.Println("Erreur lors de la création du user")
 	}
 }
+
 func createSalon(i int) {
-	query := "INSERT INTO users (nomSalon,maxUser) VALUE(?,?)"
-	_, err := db.Exec(query, "nomSalon"+strconv.Itoa(i), 100)
+	query := "INSERT INTO salons (nameSalon, nbUserMax) VALUES(?,?)"
+	_, err := db.Exec(query, "Salon"+strconv.Itoa(i), 100)
 	if err != nil {
-		log.Println("Erreur lors de la création du user")
+		log.Println("Erreur lors de la création du salon")
 	}
 }
 
@@ -166,11 +169,13 @@ func main() {
 	i := 0
 	for i < 10 {
 		createUser(i)
+		i++
 	}
 
 	j := 0
 	for j < 2 {
 		createSalon(j)
+		j++
 	}
 
 	defer db.Close()
