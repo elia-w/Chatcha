@@ -22,11 +22,11 @@ type ListeUser struct {
 }
 
 type Message struct {
-	id      int
-	idUser  int
-	idSalon int
-	contenu string
-	date    string
+	id      int    
+	idUser  int    `json:"id"`
+	idSalon int    `json:"idSalon"`
+	contenu string `json:"contenu"`
+	date    string `json:"date"`	
 }
 
 var upgrader = websocket.Upgrader{
@@ -64,7 +64,10 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		} else {
-			print(p)
+			var msg Message
+			err := json.Unmarshal(p, &msg)
+			if err != nil {
+			insertMessage((p.contenu))
 		}
 
 		// Affiche le message et renvoie-le au client
