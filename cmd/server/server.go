@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/websocket"
 	_ "github.com/mattn/go-sqlite3"
@@ -27,6 +28,13 @@ type Message struct {
 	idSalon int
 	contenu string
 	date    string
+}
+
+type User struct {
+	id       int
+	username string
+	pseudo   string
+	password string
 }
 
 var upgrader = websocket.Upgrader{
@@ -134,8 +142,34 @@ func insertMessage(message Message) {
 	}
 }
 
+func createUser(i int) {
+	query := "INSERT INTO users (username,pseudo,password) VALUE(?,?,?)"
+	_, err := db.Exec(query, "user"+strconv.Itoa(i), "pseudo"+strconv.Itoa(i), "password"+strconv.Itoa(i))
+	if err != nil {
+		log.Println("Erreur lors de la création du user")
+	}
+}
+func createSalon(i int) {
+	query := "INSERT INTO users (nomSalon,maxUser) VALUE(?,?)"
+	_, err := db.Exec(query, "nomSalon"+strconv.Itoa(i), 100)
+	if err != nil {
+		log.Println("Erreur lors de la création du user")
+	}
+}
+
 func main() {
 	initDB()
+
+	i := 0
+	for i < 10 {
+		createUser(i)
+	}
+
+	j := 0
+	for j < 2 {
+		createSalon(j)
+	}
+
 	defer db.Close()
 
 	http.HandleFunc("/", handleConnection)
