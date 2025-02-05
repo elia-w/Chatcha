@@ -7,7 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type User struct {
+type Users struct {
 	id       int
 	username string
 	pseudo   string
