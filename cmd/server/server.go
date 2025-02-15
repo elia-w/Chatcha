@@ -39,6 +39,18 @@ type Message struct {
 	Date    string `json:"date"`
 }
 
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Pseudo   string `json:"pseudo"`
+	Password string `json:"password"`
+}
+
+type InitialData struct {
+	IDUser  int `json:"idUser"`
+	IDSalon int `json:"idSalon"`
+}
+
 func initDB() {
 	var err error
 	db, err = sql.Open("sqlite3", "./bdd.db")
@@ -52,14 +64,12 @@ func initDB() {
 		idUser INTEGER,
 		idSalon INTEGER,
 		contenu TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (idUser) REFERENCES users(id),
-		FOREIGN KEY (idSalon) REFERENCES salons(id)
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS salons (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		nbUserMax INTEGER,
+		nbUser INTEGER,
 		nameSalon TEXT
 	);
 
@@ -73,24 +83,17 @@ func initDB() {
 	CREATE TABLE IF NOT EXISTS listeUser(
 		idSalon INTEGER,
 		idUser INTEGER,
-		PRIMARY KEY (idSalon, idUser),
-		FOREIGN KEY (idUser) REFERENCES users(id),
-		FOREIGN KEY (idSalon) REFERENCES salons(id)
+		PRIMARY KEY (idSalon, idUser)
 	);
+
+	INSERT OR IGNORE INTO salons (id, nbUser, nameSalon) VALUES (1, 0, 'salon_1');
 	`
 	_, err = db.Exec(query)
 	if err != nil {
 		log.Fatal("❌ Erreur lors de la création des tables :", err)
 	}
 
-	insertSampleData()
-	fmt.Println("✅ Base de données initialisée.")
-}
-
-func insertSampleData() {
-	db.Exec("INSERT INTO salons (nbUserMax, nameSalon) VALUES (10, 'Golang Fans'), (20, 'Redis Experts')")
-	db.Exec("INSERT INTO users (username, pseudo, password) VALUES ('user1', 'GoMaster', 'pass1'), ('user2', 'RedisKing', 'pass2')")
-	db.Exec("INSERT INTO listeUser (idSalon, idUser) VALUES (1, 1), (2, 2)")
+	fmt.Println("✅ Base de données initialisée avec un salon par défaut.")
 }
 
 func initRedis() {
@@ -101,31 +104,24 @@ func initRedis() {
 	fmt.Println("✅ Connexion à Redis établie.")
 }
 
-func validateJWT(tokenString string) (int, error) {
-	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+func validateJWT(authHeader string) (User, error) {
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		return []byte(jwtSecret), nil
 	})
-	if err != nil || !token.Valid {
-		return 0, fmt.Errorf("❌ Token invalide")
+
+	if err != nil {
+		return User{}, err
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return 0, fmt.Errorf("❌ Claims invalides")
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		userID := int(claims["user_id"].(float64))
+		return User{ID: userID}, nil
 	}
-	userID := int(claims["user_id"].(float64))
-	return userID, nil
+	return User{}, fmt.Errorf("invalid token")
 }
 
 func handleConnection(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	userID, err := validateJWT(authHeader)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("❌ Erreur WebSocket :", err)
@@ -133,12 +129,76 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	clientsLock.Lock()
-	clients[conn] = true
-	clientsLock.Unlock()
+	// 🔹 Lecture des credentials envoyés par le client
+	_, p, err := conn.ReadMessage()
+	if err != nil {
+		log.Println("❌ Erreur réception credentials :", err)
+		return
+	}
 
-	fmt.Printf("✅ Utilisateur %d connecté.\n", userID)
+	var userData map[string]string
+	if err := json.Unmarshal(p, &userData); err != nil {
+		log.Println("❌ Erreur parsing credentials :", err)
+		return
+	}
 
+	username := userData["username"]
+	pseudo := userData["pseudo"]
+	password := userData["password"]
+	var userID, salonID, nbUser int
+
+	// 🔹 Vérification si l'utilisateur existe déjà
+	err = db.QueryRow("SELECT id, (SELECT idSalon FROM listeUser WHERE idUser = users.id LIMIT 1) FROM users WHERE username = ?", username).Scan(&userID, &salonID)
+	if err == sql.ErrNoRows {
+		// 🔹 L'utilisateur n'existe pas, on le crée
+		result, err := db.Exec("INSERT INTO users (username, pseudo, password) VALUES (?, ?, ?)", username, pseudo, password)
+		if err != nil {
+			log.Println("❌ Erreur insertion utilisateur :", err)
+			return
+		}
+		userID64, _ := result.LastInsertId()
+		userID = int(userID64)
+
+		// 🔹 Recherche du dernier salon avec moins de 10 utilisateurs
+		err = db.QueryRow("SELECT id, nbUser FROM salons ORDER BY id DESC LIMIT 1").Scan(&salonID, &nbUser)
+		if err == sql.ErrNoRows || nbUser >= 10 {
+			// 🔹 Aucun salon existant ou le dernier salon est plein, on en crée un nouveau
+			result, err := db.Exec("INSERT INTO salons (nbUser, nameSalon) VALUES (?, ?)", 0, fmt.Sprintf("Salon_%d", salonID+1))
+			if err != nil {
+				log.Println("❌ Erreur création nouveau salon :", err)
+				return
+			}
+			salonID64, _ := result.LastInsertId()
+			salonID = int(salonID64)
+		}
+
+		// 🔹 Ajout de l'utilisateur au salon
+		_, err = db.Exec("INSERT INTO listeUser (idSalon, idUser) VALUES (?, ?)", salonID, userID)
+		if err != nil {
+			log.Println("❌ Erreur ajout utilisateur dans salon :", err)
+			return
+		}
+
+		// 🔹 Mise à jour du nombre d'utilisateurs dans le salon
+		db.Exec("UPDATE salons SET nbUser = nbUser + 1 WHERE id = ?", salonID)
+	} else {
+		// 🔹 Si l'utilisateur existait déjà, on vérifie bien son salon
+		err = db.QueryRow("SELECT idSalon FROM listeUser WHERE idUser = ?", userID).Scan(&salonID)
+		if err != nil {
+			log.Println("❌ Erreur récupération du salon de l'utilisateur :", err)
+			return
+		}
+		fmt.Printf("🔄 Utilisateur %s déjà existant (ID: %d), réassigné au salon %d\n", username, userID, salonID)
+	}
+
+	// 🔹 Envoi des informations au client
+	initialData := InitialData{IDUser: userID, IDSalon: salonID}
+	initialDataJSON, _ := json.Marshal(initialData)
+	conn.WriteMessage(websocket.TextMessage, initialDataJSON)
+
+	fmt.Printf("✅ Utilisateur %s connecté avec ID %d dans le salon %d.\n", username, userID, salonID)
+
+	// 🔹 Écoute des messages WebSocket
 	for {
 		_, p, err := conn.ReadMessage()
 		if err != nil {
@@ -188,7 +248,6 @@ func main() {
 	initRedis()
 
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
 	http.HandleFunc("/", handleConnection)
 
 	server := &http.Server{Addr: ":8080", Handler: http.DefaultServeMux}
