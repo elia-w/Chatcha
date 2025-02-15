@@ -21,16 +21,28 @@ var ctx = context.Background()
 var rdb *redis.Client
 var clients []*websocket.Conn
 var clientsLock sync.Mutex
-var stopChan = make(chan struct{}) // Canal global pour arrêter proprement
-var wg sync.WaitGroup              // Attendre la fin des goroutines
+var stopChan = make(chan struct{})
+var wg sync.WaitGroup
 
-const jwtSecret = "secret_key" // ⚠️ Change cette clé en production !
+const jwtSecret = "secret_key"
 
 type Message struct {
 	IDUser  int    `json:"idUser"`
 	IDSalon int    `json:"idSalon"`
 	Contenu string `json:"contenu"`
 	Date    string `json:"date"`
+}
+
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Pseudo   string `json:"pseudo"`
+	Password string `json:"password"`
+}
+
+var initialData struct {
+	IDUser  int `json:"idUser"`
+	IDSalon int `json:"idSalon"`
 }
 
 // Générer un token JWT
@@ -51,40 +63,48 @@ func initRedis() {
 	})
 }
 
-// Se connecter au WebSocket
-func connectWebSocket(userID int) (*websocket.Conn, error) {
+// Se connecter au WebSocket avec tentative de reconnexion
+func connectWebSocket(user User) (*websocket.Conn, error) {
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+generateJWT(userID))
+	headers.Set("Authorization", "Bearer "+generateJWT(user.ID))
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080", headers)
+	var conn *websocket.Conn
+	var err error
+	for i := 0; i < 3; i++ {
+		conn, _, err = websocket.DefaultDialer.Dial("ws://localhost:8080", headers)
+		if err == nil {
+			break
+		}
+		log.Printf("🔄 Tentative de reconnexion (%d/3) pour utilisateur %s...\n", i+1, user.Pseudo)
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("Erreur connexion WebSocket : %v", err)
+		return nil, fmt.Errorf("❌ Erreur connexion WebSocket : %v", err)
 	}
 
 	clientsLock.Lock()
-	clients = append(clients, conn) // Stocker la connexion pour une fermeture propre
+	clients = append(clients, conn)
 	clientsLock.Unlock()
 
 	return conn, nil
 }
 
-// Écouter les messages de Redis
-func listenMessages(userID int) {
+func listenMessages(user User, salonID int) {
 	defer wg.Done()
 
-	pubsub := rdb.Subscribe(ctx, "salon_1")
+	salonChannel := fmt.Sprintf("salon_%d", salonID) // 🔹 Écoute uniquement son salon
+	pubsub := rdb.Subscribe(ctx, salonChannel)
 	defer pubsub.Close()
 
-	ch := pubsub.Channel() // ✅ Utiliser le canal au lieu de `ReceiveMessage()`
-
+	ch := pubsub.Channel()
 	for {
 		select {
-		case <-stopChan: // Arrêt demandé
-			fmt.Printf("🛑 Utilisateur %d arrête l'écoute de Redis.\n", userID)
+		case <-stopChan:
+			fmt.Printf("🛑 Utilisateur %s arrête l'écoute de Redis.\n", user.Pseudo)
 			return
 		case msg, ok := <-ch:
 			if !ok {
-				fmt.Printf("🛑 Canal Redis fermé pour utilisateur %d.\n", userID)
+				fmt.Printf("🛑 Canal Redis fermé pour utilisateur %s.\n", user.Pseudo)
 				return
 			}
 
@@ -94,56 +114,82 @@ func listenMessages(userID int) {
 				continue
 			}
 
-			if receivedMessage.IDUser != userID {
-				fmt.Printf("📩 Utilisateur %d a reçu : %s\n", userID, receivedMessage.Contenu)
+			if receivedMessage.IDUser != user.ID {
+				fmt.Printf("📩 Utilisateur %s a reçu dans salon %d : %s\n", user.Pseudo, salonID, receivedMessage.Contenu)
 			}
 		}
 	}
 }
 
-// Simuler un client
-func startClient(userID int) {
+func startClient(user User) {
 	defer wg.Done()
 
-	conn, err := connectWebSocket(userID)
+	conn, err := connectWebSocket(user)
 	if err != nil {
-		log.Printf("❌ Utilisateur %d impossible de se connecter : %v\n", userID, err)
+		log.Printf("❌ Utilisateur %s impossible de se connecter : %v\n", user.Pseudo, err)
 		return
 	}
 	defer conn.Close()
 
-	fmt.Printf("✅ Utilisateur %d connecté.\n", userID)
+	// 🔹 Envoi des informations d'inscription au serveur
+	userData := map[string]string{
+		"username": user.Username,
+		"pseudo":   user.Pseudo,
+		"password": user.Password,
+	}
+	userDataJSON, _ := json.Marshal(userData)
+	if err := conn.WriteMessage(websocket.TextMessage, userDataJSON); err != nil {
+		log.Printf("❌ Utilisateur %s erreur envoi credentials : %v\n", user.Pseudo, err)
+		return
+	}
+
+	// 🔹 Réception de l'ID utilisateur et du salon assigné
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		log.Printf("❌ Utilisateur %s erreur réception message : %v\n", user.Pseudo, err)
+		return
+	}
+
+	if err := json.Unmarshal(message, &initialData); err != nil {
+		log.Printf("❌ Utilisateur %s erreur parsing message initial : %v\n", user.Pseudo, err)
+		return
+	}
+
+	user.ID = initialData.IDUser
+	salonID := initialData.IDSalon
+
+	fmt.Printf("✅ Utilisateur %s connecté avec ID %d dans le salon %d.\n", user.Pseudo, user.ID, salonID)
 
 	wg.Add(1)
-	go listenMessages(userID)
+	go listenMessages(user, salonID) // Écoute uniquement son salon
 
-	// Simulation de messages envoyés
+	// 🔹 Simulation d'envoi de messages
 	nbMessages := rand.Intn(10) + 1
 	for i := 0; i < nbMessages; i++ {
 		select {
 		case <-stopChan:
-			fmt.Printf("🛑 Utilisateur %d arrête l'envoi de messages.\n", userID)
+			fmt.Printf("🛑 Utilisateur %s arrête l'envoi de messages.\n", user.Pseudo)
 			return
 		default:
 			message := Message{
-				IDUser:  userID,
-				IDSalon: 1,
-				Contenu: fmt.Sprintf("Message %d de l'utilisateur %d", i+1, userID),
+				IDUser:  user.ID,
+				IDSalon: salonID, // 🔹 Envoi dans son salon
+				Contenu: fmt.Sprintf("Message %d de l'utilisateur %s", i+1, user.Pseudo),
 				Date:    time.Now().Format("2006-01-02 15:04:05"),
 			}
 
 			messageJSON, _ := json.Marshal(message)
 			if err := conn.WriteMessage(websocket.TextMessage, messageJSON); err != nil {
-				log.Printf("❌ Utilisateur %d erreur envoi message : %v\n", userID, err)
+				log.Printf("❌ Utilisateur %s erreur envoi message : %v\n", user.Pseudo, err)
 				return
 			}
-			fmt.Printf("📤 Utilisateur %d a envoyé : %s\n", userID, message.Contenu)
+			fmt.Printf("📤 Utilisateur %s a envoyé : %s\n", user.Pseudo, message.Contenu)
 
 			time.Sleep(time.Duration(rand.Intn(2000)+500) * time.Millisecond)
 		}
 	}
 
-	fmt.Printf("👋 Utilisateur %d se déconnecte.\n", userID)
+	fmt.Printf("👋 Utilisateur %s se déconnecte.\n", user.Pseudo)
 	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Bye !"))
 }
 
@@ -168,11 +214,9 @@ func main() {
 
 	clientID := 1
 
-	// Capture Ctrl+C pour arrêter proprement
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 
-	// Démarrer les clients dans une goroutine
 	go func() {
 		for {
 			select {
@@ -180,21 +224,24 @@ func main() {
 				return
 			default:
 				wg.Add(1)
-				go startClient(clientID)
+				user := User{
+					ID:       0,
+					Username: fmt.Sprintf("username%d", clientID),
+					Pseudo:   fmt.Sprintf("pseudo%d", clientID),
+					Password: fmt.Sprintf("password%d", clientID),
+				}
+				go startClient(user)
 				clientID++
 				time.Sleep(time.Duration(rand.Intn(3)) * time.Second)
 			}
 		}
 	}()
 
-	// Attendre Ctrl+C
 	<-sigChan
 	fmt.Println("\n🛑 Arrêt du client en cours...")
 
-	// Fermer stopChan pour signaler l'arrêt aux goroutines
 	close(stopChan)
 
-	// ✅ Attendre avec timeout pour éviter blocage
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -208,10 +255,8 @@ func main() {
 		fmt.Println("⚠️ Temps d'arrêt dépassé, certaines goroutines n'ont pas terminé.")
 	}
 
-	// Fermer proprement les WebSockets
 	shutdownClients()
 
-	// Fermer Redis proprement
 	if err := rdb.Close(); err != nil {
 		log.Println("❌ Erreur lors de la fermeture de Redis :", err)
 	} else {
