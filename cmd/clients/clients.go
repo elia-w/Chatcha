@@ -24,6 +24,7 @@ var clientsLock sync.Mutex
 var stopChan = make(chan struct{})
 var wg sync.WaitGroup
 
+// tokken
 const jwtSecret = "secret_key"
 
 type Message struct {
@@ -45,7 +46,12 @@ var initialData struct {
 	IDSalon int `json:"idSalon"`
 }
 
-// Générer un token JWT
+// generateJWT génère un token JWT pour l'utilisateur avec un ID spécifique.
+// Le token est valide pendant 24 heures.
+// Paramètres :
+//   - userID (int) : L'ID de l'utilisateur pour lequel générer le token.
+// Retourne :
+//   - string : Le token JWT généré pour l'utilisateur.
 func generateJWT(userID int) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": userID,
@@ -55,7 +61,10 @@ func generateJWT(userID int) string {
 	return tokenString
 }
 
-// Initialiser Redis
+
+// initRedis initialise la connexion au serveur Redis.
+// Elle crée un client Redis pour la communication avec la base de données Redis locale.
+// Cette fonction ne prend pas de paramètres et ne retourne rien.
 func initRedis() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -63,7 +72,12 @@ func initRedis() {
 	})
 }
 
-// Se connecter au WebSocket avec tentative de reconnexion
+// connectWebSocket établit une connexion WebSocket au serveur avec un token d'autorisation.
+// Elle réessaie jusqu'à 3 fois en cas d'échec.
+// Paramètres :
+//   - user (User) : L'utilisateur qui se connecte, avec son ID et son token d'authentification.
+// Retourne :
+//   - (*websocket.Conn, error) : La connexion WebSocket ou une erreur si la connexion échoue.
 func connectWebSocket(user User) (*websocket.Conn, error) {
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+generateJWT(user.ID))
@@ -89,6 +103,12 @@ func connectWebSocket(user User) (*websocket.Conn, error) {
 	return conn, nil
 }
 
+// listenMessages écoute les messages sur un salon spécifique pour un utilisateur donné.
+// Les messages sont extraits depuis Redis et affichés s'ils sont envoyés dans le même salon.
+// Paramètres :
+//   - user (User) : L'utilisateur qui écoute les messages.
+//   - salonID (int) : L'ID du salon dans lequel l'utilisateur écoute les messages.
+// Cette fonction ne retourne rien, elle s'exécute indéfiniment jusqu'à l'arrêt de l'écoute.
 func listenMessages(user User, salonID int) {
 	defer wg.Done()
 
@@ -121,6 +141,12 @@ func listenMessages(user User, salonID int) {
 	}
 }
 
+// startClient gère l'inscription et la connexion d'un utilisateur via WebSocket.
+// L'utilisateur envoie ses informations d'inscription, puis reçoit son ID et le salon auquel il est assigné.
+// Elle simule ensuite l'envoi de messages dans ce salon.
+// Paramètres :
+//   - user (User) : L'utilisateur qui se connecte et participe aux discussions.
+// Cette fonction ne retourne rien.
 func startClient(user User) {
 	defer wg.Done()
 
@@ -193,7 +219,8 @@ func startClient(user User) {
 	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Bye !"))
 }
 
-// Gérer l'arrêt propre des clients
+// shutdownClients arrête proprement tous les clients connectés en envoyant des messages de fermeture via WebSocket.
+// Cette fonction ne prend pas de paramètres et ne retourne rien.
 func shutdownClients() {
 	fmt.Println("\n🛑 Arrêt en cours... Déconnexion des clients...")
 
@@ -207,6 +234,7 @@ func shutdownClients() {
 
 	fmt.Println("✅ Tous les clients ont été déconnectés proprement.")
 }
+
 
 func main() {
 	initRedis()

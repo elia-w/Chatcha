@@ -51,6 +51,9 @@ type InitialData struct {
 	IDSalon int `json:"idSalon"`
 }
 
+// initDB initialise la base de données SQLite et crée les tables nécessaires si elles n'existent pas.
+// Elle crée également un salon par défaut avec le nom "salon_1".
+// Cette fonction ne prend pas de paramètres et ne retourne rien.
 func initDB() {
 	var err error
 	db, err = sql.Open("sqlite3", "./bdd.db")
@@ -96,6 +99,9 @@ func initDB() {
 	fmt.Println("✅ Base de données initialisée avec un salon par défaut.")
 }
 
+// initRedis initialise la connexion à Redis pour permettre la publication de messages dans les salons.
+// Elle établit la connexion à un serveur Redis local à l'adresse "localhost:6379".
+// Cette fonction ne prend pas de paramètres et ne retourne rien.
 func initRedis() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
@@ -104,6 +110,12 @@ func initRedis() {
 	fmt.Println("✅ Connexion à Redis établie.")
 }
 
+// validateJWT valide le token JWT contenu dans l'en-tête d'autorisation.
+// Elle parse le token et retourne l'utilisateur associé à l'ID dans le token ou une erreur si le token est invalide.
+// Paramètres :
+//   - authHeader (string) : L'en-tête d'autorisation contenant le token JWT sous forme de "Bearer <token>".
+// Retourne :
+//   - (User, error) : L'utilisateur associé au token si valide, ou une erreur en cas de token invalide.
 func validateJWT(authHeader string) (User, error) {
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -121,6 +133,13 @@ func validateJWT(authHeader string) (User, error) {
 	return User{}, fmt.Errorf("invalid token")
 }
 
+// handleConnection gère une connexion WebSocket avec un client.
+// Elle vérifie les informations d'identification de l'utilisateur, crée un utilisateur s'il n'existe pas,
+// l'assigne à un salon et gère la réception et l'envoi de messages sur la connexion WebSocket.
+// Paramètres :
+//   - w (http.ResponseWriter) : L'écrivain de la réponse HTTP pour l'upgrade de la connexion WebSocket.
+//   - r (*http.Request) : La requête HTTP contenant les informations nécessaires pour l'upgrade de la connexion.
+// Cette fonction ne retourne rien, elle gère les connexions WebSocket et l'échange de messages.
 func handleConnection(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -229,6 +248,9 @@ func handleConnection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// shutdownServer arrête proprement le serveur en fermant toutes les connexions WebSocket et en fermant les connexions Redis et SQLite.
+// Elle notifie chaque client de la fermeture du serveur et nettoie les ressources utilisées.
+// Cette fonction ne prend pas de paramètres et ne retourne rien.
 func shutdownServer() {
 	fmt.Println("\n🛑 Arrêt du serveur en cours...")
 	clientsLock.Lock()
